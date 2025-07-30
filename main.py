@@ -1,104 +1,148 @@
 import torch
 import torch.nn as nn
-import torch.optim as optim
+from torch.utils.data import DataLoader, Dataset
+from torchvision import transforms, datasets
+from torch import optim
+import matplotlib.pyplot as plt
 
-n = 100
-data = torch.randn(n, 2)  # 生成 100 个二维数据点
-labels = (data[:, 0]**2 + data[:, 1]**2 < 1).float().unsqueeze(1)  # 点在圆内为1，圆外为0
+train_data = datasets.FashionMNIST(
+    root = 'data',
+    train = True,
+    download = True,
+    transform = transforms.ToTensor()
+)
 
-plt.scatter(data[:, 0], data[:, 1], c=labels.squeeze(), cmap='coolwarm')
-plt.title("Generated Data")
-plt.xlabel("Feature 1")
-plt.ylabel("Feature 2")
-plt.show()
+test_data = datasets.FashionMNIST(
+    root = 'data',
+    train = False,
+    download = True,
+    transform = transforms.ToTensor()
+)
 
-class SimpleNN(nn.Module):
+batch_size = 64
+#DataLoader(dataset, batch_size=1, shuffle=False, num_workers=0, ...)顺序不能乱
+train_dataloader = DataLoader(train_data, batch_size = batch_size, shuffle = True, num_workers = 0)
+test_dataloader = DataLoader(test_data, batch_size = batch_size, shuffle = True, num_workers = 0)
+
+for x, y in test_dataloader: #一个loader同时包含输入数据和标签
+    print(f"输入数据的各项数据N, C, H, W是: {x.shape}")
+    print(f"标签数据的各项指标N, C, H, W是: {y.dtype}")
+    break 
+# start to build a neural network model
+device = torch.device(
+    'cuda' if torch.cuda.is_available()
+    else 'mps' if torch.backends.mps.is_available()
+    else 'cpu'
+)
+print(f"I am using {device} to calculate the tensors.")
+
+class NeuralNetwork(nn.Module):
     def __init__(self):
-        super(SimpleNN, self).__init__()
-        self.fc1 = nn.Linear(2, 4)  # 输入层有 2 个特征，隐藏层有 4 个神经元
-        self.fc2 = nn.Linear(4, 1)  # 隐藏层输出到 1 个神经元（用于二分类）
-        self.sigmoid = nn.Sigmoid()  # 二分类激活函数
+        super().__init__()
+        self.flatten = nn.Flatten() #nn.Flatten()是连接卷积层和全连接层的桥梁
+        self.linear_relu_stack = nn.Sequential(
+            nn.Linear(28*28, 512),
+            nn.ReLU(), # nn.ReLU() 神经网络里的“负能量清除器”，只保留正数，砍掉负数
+            nn.Linear(512, 512),
+            nn.ReLU(),
+            nn.Linear(512, 10)
+        )
 
     def forward(self, x):
-        x = torch.relu(self.fc1(x))  # 使用 ReLU 激活函数
-        x = self.sigmoid(self.fc2(x))  # 输出层使用 Sigmoid 激活函数
+        x = self.flatten(x)
+        x = self.linear_relu_stack(x)
         return x
-model = SimpleNN()
 
-criterion = nn.BCELoss()  # 二元交叉熵损失
-optimizer = optim.SGD(model.parameters(), lr=0.1)  # 使用随机梯度下降优化器
+model = NeuralNetwork().to(device)
+print(model)
 
-epochs = 100
-for epoch in range(epochs):
-    outputs = model(data)
-    loss = criterion(outputs, labels)
-    optimizer.zero_grad()
-    loss.backward()
-    optimizer.step()
-    if (epoch + 1) % 10 == 0:
-        print(f'Epoch [{epoch + 1}/{epochs}], Loss: {loss.item():.4f}')
+loss_fn = nn.CrossEntropyLoss()
+optimizer = optim.SGD(model.parameters(), lr=1e-3)
 
-# 可视化决策边界
-def plot_decision_boundary(model, data):
-    #逻辑： 确定 x 轴的绘图范围。从原始数据的最小/最大 x 坐标再向外拓展 1 个单位。
+#用函数包裹模型训练流程
+def train(dataloader, model, loss_fn, optimizer):
+    size = len(dataloader.dataset)
+    model.train()
+    for batch, (x, y) in enumerate(dataloader):
+        x, y = x.to(device), y.to(device)
+        pred = model(x)
+        loss = loss_fn(pred, y)
+        loss.backward()
+        optimizer.step()
+        optimizer.zero_grad()
+        if batch % 100 == 0:
+            loss, current = loss.item(), (batch+1)*len(x)
+            print(f"Loss: {loss:>7f} [{current:>5d} / {size:>5d}]")
 
-#为什么这么写： 确保绘图区域能完整覆盖所有数据点，并且在数据点周围留有**足够的空白，
-#以便清晰地看到决策边界**，而不是边界刚好切到数据点上。
-    x_min, x_max = data[:, 0].min() - 1, data[:, 0].max() + 1 
-    y_min, y_max = data[:, 1].min() - 1, data[:, 1].max() + 1
-#逻辑： 生成一个覆盖整个绘图区域的**密集网格点**。
 
-"""torch.arange(..., 0.1)：在 x_min 到 x_max（以及 y_min 到 y_max）之间，
-以 0.1 为步长生成一系列均匀间隔的数字。这个 0.1 是**网格的“密度”**，越小网格越密，
-画出来的边界越精细，但计算量越大。
+def test(dataloader, model, loss_fn):
+    size = len(dataloader.dataset)
+    num_batches = len(dataloader)
+    model.eval()
+    test_loss, correct = 0, 0
+    with torch.no_grad():
+        for x, y in dataloader:
+            x, y = x.to(device), y.to(device)
+            pred = model(x)
+            test_loss += loss_fn(pred, y).item()
+            correct += (pred.argmax(1) == y).type(torch.float).sum().item()
+            test_loss /= num_batches
+            correct /= size
+            print(f"{test_loss}, {correct*100}")
 
-torch.meshgrid(...)：将这两组一维坐标组合成二维网格，xx 包含所有点的 x 坐标，
-yy 包含所有点的 y 坐标，它们保持了原始的网格结构（比如都是 60x60 的矩阵）。
+epoch = 5
+for t in range(epoch):
+    print(f"Epoch {t+1} \n------")
+    train(train_dataloader, model, loss_fn, optimizer)
+    test(test_dataloader, model, loss_fn)
+print('Done!')
 
-indexing='ij'：这是 PyTorch meshgrid 的一个参数，
-确保 xx 和 yy 的维度顺序符合常规的矩阵索引习惯（行索引 i，列索引 j），
-这对于 matplotlib.contourf 的正确使用很重要。
 
-为什么这么写： 我们不能只用那 100 个原始数据点来画决策边界，
-那样画出来的线会很粗糙。我们需要在整个空间中**铺满“虚拟的点”，
-让模型对这些虚拟点也进行预测，才能“描绘出模型学到的完整分类区域”**。
-“测绘师”要画线，不能只看那100个点。他需要把**整个“地盘”都铺上一层“密密麻麻的、看不见的
-虚拟点”（网格），每个点都有自己的精确坐标**。这样他才能问“小笨孩”：“这个虚拟点该算谁的地盘？”。"""
-    xx, yy = torch.meshgrid(torch.arange(x_min, x_max, 0.1), torch.arange(y_min, y_max, 0.1), indexing='ij')
-"""
-xx.reshape(-1, 1): xx 现在是一个二维张量
-（reshape(-1, 1) 会把 xx 中的所有 x 坐标**“展平”成一个长长的列向量**
-torch.cat([...], dim=1): 关键操作！
-dim=1 表示在**第二个维度上进行拼接**（即横向拼接）。
-结果就是，grid 会变成一个**非常大的二维张量，
-形状是 (网格点的总数量, 2)。每一行都是一个“虚拟点”的 (x, y) 坐标**。
-“测绘师”把所有**“虚拟点的 x 坐标”和“虚拟点的 y 坐标”分别整理好，
-然后把它们“一对一”地“拼起来”，变成一份“完整的虚拟点坐标列表”**。
-现在，每个虚拟点都有自己的 (x, y) 坐标，就像我们之前给“小笨孩”输入的 data 一样。。
-"""
-    grid = torch.cat([xx.reshape(-1, 1), yy.reshape(-1, 1)], dim=1)
-"""
-“测绘师”把这份**“虚拟点坐标列表”交给“智能机器人”。
-机器人对每个虚拟点都给出一个“归属意见”（预测值）。
-model(grid) 的输出是一个长长的列向量（网格点总数, 1）,因为预测流水线上每次只吐出一个介于0和1之间的数字
-（要看model里的sigmoid和self.fc2 = nn.Linear(4, 1)）。
-3. model(grid)：机器人加工厂的“批量作业”模式
-当 PyTorch 看到 model(grid) 时，它会启动神经网络的**“批量处理模式”**：
+torch.save(model.state_dict(), 'model.pth')
+print("Saved Model to model.pth")
 
-model 会把 grid 中**每一行的数据（也就是每一个 (x, y) 坐标对），单独地**喂给神经网络进行一次前向传播。
+model = NeuralNetwork().to(device)
+model.load_state_dict(torch.load('model.pth'))
 
-对于 grid 里的**每个“小零件”，model 的“嘴巴”都会吐出一个“最终答案”**（一个 0 到 1 之间的概率值）。
 
-由于 grid 有 网格点总数 那么多的行（即那么多“小零件”），而且“小笨孩”的“嘴巴”每次只吐 1 个答案，
-所以最终 model(grid) 的输出就会把所有这些**单独的答案“堆叠”起来**，形成一个 列向量。
-重新 reshape 成和 xx/yy 相同形状的二维数组。这一步非常关键**，就是为了让 Z 的形状和 X、Y 匹配。
-测绘师再把这些“归属意见”重新整理成一个和地图网格对应的二维表格。
-**。
-"""
-    predictions = model(grid).detach().numpy().reshape(xx.shape)
-    plt.contourf(xx, yy, predictions, levels=[0, 0.5, 1], cmap='coolwarm', alpha=0.7) #levels=[0, 0.5, 1]里的0.5就是决策边界
-    plt.scatter(data[:, 0], data[:, 1], c=labels.squeeze(), cmap='coolwarm', edgecolors='k')
-    plt.title("Decision Boundary")
-    plt.show()
 
-plot_decision_boundary(model, data)
+classes = [
+    "T-shirt/top",
+    "Trouser",
+    "Pullover",
+    "Dress",
+    "Coat",
+    "Sandal",
+    "Shirt",
+    "Sneaker",
+    "Bag",
+    "Ankle boot",
+]
+
+model.eval()
+#test_data[0] 返回的是一个元组 (图片, 标签)。
+#test_data[0][0] 就是这个元组里的**第一项：图片数据**（它就是你的 x）。
+#test_data[0][1] 就是这个元组里的**第二项：图片的正确标签**（它就是你的 y）。
+x, y = test_data[0][0], test_data[0][1]
+with torch.no_grad():
+    x = x.to(device)
+    pred = model(x)
+    predicted, actual = classes[pred[0].argmax(0)], classes[y]
+    print(f'Prediced: {predicted}, Actual: {actual}')
+
+
+model.eval()
+x, y = test_data[0][0], test_data[0][1]
+with torch.no_grad():
+    x = x.to(device)
+    pred = model(x)
+    predicted, actual = classes[pred[0].argmax(0)], classes[y]
+    print(f"Predicted: {predicted}, Actual: {actual}")
+
+
+
+
+
+
+
+
