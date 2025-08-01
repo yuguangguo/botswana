@@ -1,48 +1,51 @@
 import torch
+from torch.utils.data import Dataset, DataLoader
+from torchvision import datasets
+from torchvision.transforms import ToTensor
 import torch.nn as nn
-from torch.utils.data import DataLoader, Dataset
-from torchvision import transforms, datasets
-from torch import optim
-import matplotlib.pyplot as plt
 
-train_data = datasets.FashionMNIST(
+
+train_dataset = datasets.FashionMNIST(
     root = 'data',
     train = True,
     download = True,
-    transform = transforms.ToTensor()
+    transform = ToTensor()
 )
 
-test_data = datasets.FashionMNIST(
+test_dataset = datasets.FashionMNIST(
     root = 'data',
     train = False,
     download = True,
-    transform = transforms.ToTensor()
+    transform = ToTensor()
 )
 
 batch_size = 64
-#DataLoader(dataset, batch_size=1, shuffle=False, num_workers=0, ...)顺序不能乱
-train_dataloader = DataLoader(train_data, batch_size = batch_size, shuffle = True, num_workers = 0)
-test_dataloader = DataLoader(test_data, batch_size = batch_size, shuffle = True, num_workers = 0)
-
-for x, y in test_dataloader: #一个loader同时包含输入数据和标签
-    print(f"输入数据的各项数据N, C, H, W是: {x.shape}")
-    print(f"标签数据的各项指标N, C, H, W是: {y.dtype}")
-    break 
-# start to build a neural network model
-device = torch.device(
-    'cuda' if torch.cuda.is_available()
-    else 'mps' if torch.backends.mps.is_available()
-    else 'cpu'
+train_dataloader = DataLoader(
+    train_dataset, batch_size = batch_size, shuffle = True, num_workers = 0 
 )
-print(f"I am using {device} to calculate the tensors.")
+test_dataloader = DataLoader(
+    test_dataset, batch_size = batch_size, shuffle = True, num_workers = 0
+)
+
+for x, y in test_dataloader:
+    print(x.shape, x.dtype)
+    print(y.shape, y.dtype)
+    break
+
+device = torch.device(
+    "cuda" if torch.cuda.is_available()
+    else "mps" if torch.backends.mps.is_available()
+    else "cpu"
+)
+print(f"我们现在在{device}上计算张量")
 
 class NeuralNetwork(nn.Module):
     def __init__(self):
         super().__init__()
-        self.flatten = nn.Flatten() #nn.Flatten()是连接卷积层和全连接层的桥梁
+        self.flatten = nn.Flatten()
         self.linear_relu_stack = nn.Sequential(
             nn.Linear(28*28, 512),
-            nn.ReLU(), # nn.ReLU() 神经网络里的“负能量清除器”，只保留正数，砍掉负数
+            nn.ReLU(),
             nn.Linear(512, 512),
             nn.ReLU(),
             nn.Linear(512, 10)
@@ -50,19 +53,19 @@ class NeuralNetwork(nn.Module):
 
     def forward(self, x):
         x = self.flatten(x)
-        x = self.linear_relu_stack(x)
-        return x
+        logits = self.linear_relu_stack(x)
+        return logits
 
-model = NeuralNetwork().to(device)
+model = NeuralNetwork().to(device) #已建立模型，忘记添加to(device)
 print(model)
-
+print("-"*35)
 loss_fn = nn.CrossEntropyLoss()
-optimizer = optim.SGD(model.parameters(), lr=1e-3)
+optimizer = torch.optim.SGD(model.parameters(), lr=1e-3)
 
-#用函数包裹模型训练流程
+#定义训练模型的函数，里面有loss和current的统计
 def train(dataloader, model, loss_fn, optimizer):
     size = len(dataloader.dataset)
-    model.train()
+    model.train()               # 开始train模式
     for batch, (x, y) in enumerate(dataloader):
         x, y = x.to(device), y.to(device)
         pred = model(x)
@@ -70,44 +73,38 @@ def train(dataloader, model, loss_fn, optimizer):
         loss.backward()
         optimizer.step()
         optimizer.zero_grad()
-        if batch % 100 == 0:
-            loss, current = loss.item(), (batch+1)*len(x)
-            print(f"Loss: {loss:>7f} [{current:>5d} / {size:>5d}]")
+        if (batch+1) % 100 == 0:
+            loss, current = loss.item(), (batch+1) * len(x)
+            print(f"Loss: {loss:>7f}, Current: [{100*current:>5d} / {size:>5d}]")
 
-
+#定义测评模型的函数，里面有test_loss, correct的统计
 def test(dataloader, model, loss_fn):
     size = len(dataloader.dataset)
     num_batches = len(dataloader)
-    model.eval()
-    test_loss, correct = 0, 0
+    model.eval() #开始evaluation模式
+    test_loss, correct = 0, 0  #这行代码已经忘记
     with torch.no_grad():
-        for x, y in dataloader:
-            x, y = x.to(device), y.to(device)
-            pred = model(x)
+        for x, y in dataloader: #x的形状是[64, 1, 28, 28]
+            x, y = x.to(device), y.to(device)  #此处x, y 都要指定设备
+            pred = model(x)  #pred的形状是[64, 10]
             test_loss += loss_fn(pred, y).item()
-            correct += (pred.argmax(1) == y).type(torch.float).sum().item()
+            correct += (pred.argmax(1) == y).type(torch.float).sum().item() #这行码也已经忘记了
             test_loss /= num_batches
             correct /= size
-            print(f"{test_loss}, {correct*100}")
-
-epoch = 5
-for t in range(epoch):
-    print(f"Epoch {t+1} \n------")
+            print(f"Loss Rate: {test_loss:.4f}, Correct Rate: {correct*100:>0.1f}")
+epochs = 5
+for t in range(epochs):
+    print(f"第{t+1}轮---------------------")
     train(train_dataloader, model, loss_fn, optimizer)
     test(test_dataloader, model, loss_fn)
-print('Done!')
-
+print("Done Already!")
 
 torch.save(model.state_dict(), 'model.pth')
-print("Saved Model to model.pth")
-
 model = NeuralNetwork().to(device)
 model.load_state_dict(torch.load('model.pth'))
 
-
-
 classes = [
-    "T-shirt/top",
+      "T-shirt/top",
     "Trouser",
     "Pullover",
     "Dress",
@@ -120,29 +117,11 @@ classes = [
 ]
 
 model.eval()
-#test_data[0] 返回的是一个元组 (图片, 标签)。
-#test_data[0][0] 就是这个元组里的**第一项：图片数据**（它就是你的 x）。
-#test_data[0][1] 就是这个元组里的**第二项：图片的正确标签**（它就是你的 y）。
-x, y = test_data[0][0], test_data[0][1]
+x, y = test_dataset[0][0], test_dataset[0][1]
 with torch.no_grad():
-    x = x.to(device)
+    x.to(device)
     pred = model(x)
-    predicted, actual = classes[pred[0].argmax(0)], classes[y]
-    print(f'Prediced: {predicted}, Actual: {actual}')
-
-
-model.eval()
-x, y = test_data[0][0], test_data[0][1]
-with torch.no_grad():
-    x = x.to(device)
-    pred = model(x)
-    predicted, actual = classes[pred[0].argmax(0)], classes[y]
-    print(f"Predicted: {predicted}, Actual: {actual}")
-
-
-
-
-
-
-
-
+    predicted = classes[pred[0].argmax()] #这里dim=0，又记错了
+    actual = classes[y]
+    print(f"Predicted: {predicted}")
+    print(f"Actual: {actual}")
