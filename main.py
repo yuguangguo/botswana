@@ -1,80 +1,63 @@
 import torch
-from torchvision.io import read_image
-from torch.utils.data import DataLoader, Dataset
-import os
-import pandas as pd
-from torchvision import transforms, datasets
+import torch.nn as nn
+import torch.onnx as onnx
+import onnxruntime as ort
+import numpy as np
 
-train_data = datasets.FashionMNIST(
-    root = 'data',
-    train = True,
-    download = True,
-    transform = ToTensor()
+#导出、推理
+class MyModel(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.conv_relu_flatten_fc_stack = nn.Sequential(
+            nn.conv2d(1, 10, kernel_size=5),
+            nn.ReLU(),
+            nn.Flatten(),
+            nn.Linear(10 * 24 * 24, 10)
+        )
+
+    def forward(self, x):
+        x = self.conv_relu_flatten_fc_stack(x)
+        return x
+
+model = MyModel()
+
+input_data = torch.randn(1, 1, 28, 28)
+
+onnx.export(
+    mode,
+    input_data,
+    'MyModel.onnx',
+    input_name = ['input_0'],
+    output_name = ['output_0'],
+    opset_version = 17, #ONNX操作集版本
+    dynamic_axes = {'input_0': {0: 'batch_size'} } #这行不懂
 )
+print("模型已成功导出！文件名是'MyModel.onnx")
 
-test_data = datasets.FashionMNIST(
-    root = 'data',
-    train = False,
-    download = True,
-    transform = ToTensor()
-)
+print("-"*35)
+#用ONNX加载模型并推理，创建推理会话
 
-labels_map = {
-    0: "T-Shirt",
-    1: "Trouser",
-    2: "Pullover",
-    3: "Dress",
-    4: "Coat",
-    5: "Sandal",
-    6: "Shirt",
-    7: "Sneaker",
-    8: "Bag",
-    9: "Ankle Boot",
-}
+session = ort.InferenceSession("MyModel.onnx") #导入模型
 
-figure = plt.figure(figsize=(9, 9))
-rows, cols = 3, 3
-for i in range(1, rows*cols+1):
-    index = torch.randint(len(train_data), size=(1, )).item()
-    img, label = train_data[index]
-    figure.add_subplot(rows, cols, i)
-    plt.title(labels_map[label])
-    plt.axis('off')
-    plt.imshow(img.squeeze(), cmap='gray')
-plt.show()
+input_data = np.random.rand(1, 1, 28, 28).astype(np.float32) #准备输入数据，ort通常需要Numpy数组
 
-class MyImageDataset(Dataset):
-    def __init__(self, annotation_file, img_dir, transform=None, target_transform=None):
-        self.img_labels = pd.read_csv(annotation_file)
-        self.img_dir = img_dir
-        self.transform = transform
-        self.target_transform = target_transform
-    def __len__(self):
-        return len(self.img_labels)
-    def __getitem__(self, idx):
-        img_path = os.path.join(self.img_dir, self.img_labels.iloc[idx, 0])
-        image = read_image(image)
-        label = self.img_labels.iloc[idx, 1]
-        if self.transform:
-            image = self.transform(image)
-        if self.target_transform:
-            label = self.target_transform(label)
-        return image, label
+#获取输入和输出名称
+input_name = session.get_inputs()[0].name
+output_name = session.get_outputs()[0].name
+
+#执行推理，需要提供输入、输出的名称
+output = session.run([output_name], {input_name: input_data})[0]
+
+print(output.shape)
+print(output[0][:5])
 
 
-train_dataloader = DataLoader(
-    train_data, batch_size=64, shuffle=True, num_workers=0    
-)
-test_dataloader = DataLoader(
-    test_data, batch_size=64, shuffle=True, num_workers=0    
-)
 
-img_features, img_labels = next(iter(train_dataloader))
-print(f"{img_features.size()}")
-print(f"{img_labels.dtype}")
-image = img_features[0].squeeze()
-label = img_labels[0]
-plt.title(labels_map[label.item()])
-plt.imshow(image, cmap='gray')
-plt.show()
-print(label)
+
+
+
+
+
+
+
+
