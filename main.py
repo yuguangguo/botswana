@@ -1,63 +1,44 @@
 import torch
-import torch.nn as nn
-import torch.onnx as onnx
-import onnxruntime as ort
-import numpy as np
+from torch.utils.data import DataLoader, Dataset
+from torchvision import datasets
+from torchvision.transforms import v2, ToTensor
+import matplotlib.pyplot as plt
 
-#导出、推理
-class MyModel(nn.Module):
-    def __init__(self):
-        super().__init__()
-        self.conv_relu_flatten_fc_stack = nn.Sequential(
-            nn.conv2d(1, 10, kernel_size=5),
-            nn.ReLU(),
-            nn.Flatten(),
-            nn.Linear(10 * 24 * 24, 10)
-        )
-
-    def forward(self, x):
-        x = self.conv_relu_flatten_fc_stack(x)
-        return x
-
-model = MyModel()
-
-input_data = torch.randn(1, 1, 28, 28)
-
-onnx.export(
-    mode,
-    input_data,
-    'MyModel.onnx',
-    input_name = ['input_0'],
-    output_name = ['output_0'],
-    opset_version = 17, #ONNX操作集版本
-    dynamic_axes = {'input_0': {0: 'batch_size'} } #这行不懂
+train_data = datasets.FashionMNIST(
+    root = 'data',
+    train = True,
+    download = True,
+    transform = ToTensor()
 )
-print("模型已成功导出！文件名是'MyModel.onnx")
 
-print("-"*35)
-#用ONNX加载模型并推理，创建推理会话
+test_data = datasets.FashionMNIST(
+    root = 'data',
+    train = False,
+    download = True,
+    transform = ToTensor()
+)
 
-session = ort.InferenceSession("MyModel.onnx") #导入模型
+classes = {
+    0: "T-Shirt",
+    1: "Trouser",
+    2: "Pullover",
+    3: "Dress",
+    4: "Coat",
+    5: "Sandal",
+    6: "Shirt",
+    7: "Sneaker",
+    8: "Bag",
+    9: "Ankle Boot",
+}
 
-input_data = np.random.rand(1, 1, 28, 28).astype(np.float32) #准备输入数据，ort通常需要Numpy数组
-
-#获取输入和输出名称
-input_name = session.get_inputs()[0].name
-output_name = session.get_outputs()[0].name
-
-#执行推理，需要提供输入、输出的名称
-output = session.run([output_name], {input_name: input_data})[0]
-
-print(output.shape)
-print(output[0][:5])
-
-
-
-
-
-
-
-
-
-
+figure = plt.figure(figsize=(9, 9))
+cols, rows = 6, 6
+for i in range(1, cols*rows+1):
+    index = torch.randint(len(train_data), size=(1, )).item()
+    img, label = train_data[index]
+    figure.add_subplot(cols, rows, i)
+    plt.title(classes[label])
+    plt.axis("off")
+    plt.imshow(img.squeeze(), cmap='gray')
+plt.show()
 
